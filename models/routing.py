@@ -3,27 +3,33 @@
 All model access goes through this module — never instantiate providers directly.
 Uses langchain-litellm (ChatLiteLLM) for unified routing across providers.
 
-Model string format (LiteLLM convention):
-  provider/model-name  (e.g., "groq/llama-3.3-70b-versatile")
+Routing strategy:
+  - Logical/reasoning tasks → Gemini 2.5 Flash (strong reasoning, free tier)
+  - Fast/search tasks → Groq Llama 3.3 70B (fast, free)
 
-Default: Groq Llama 3.3 70B (free, fast, no vendor lock-in)
 See: https://docs.langchain.com/oss/python/integrations/chat/litellm
 """
 
 from langchain_litellm import ChatLiteLLM
 
-# Task → model mapping (all tasks use free Groq Llama 3.3 70B)
-DEFAULT_MODEL = "groq/llama-3.3-70b-versatile"
+# Model aliases
+GEMINI_FLASH = "gemini/gemini-2.5-flash"
+GROQ_LLAMA = "groq/llama-3.3-70b-versatile"
 
+# Task → model mapping
 MODEL_ROUTING = {
-    "planning": DEFAULT_MODEL,
-    "research": DEFAULT_MODEL,
-    "financial_analysis": DEFAULT_MODEL,
-    "technical_analysis": DEFAULT_MODEL,
-    "reflection": DEFAULT_MODEL,
-    "report_writing": DEFAULT_MODEL,
-    "quick_summary": DEFAULT_MODEL,
+    # Logical / reasoning tasks → Gemini Flash
+    "planning": GEMINI_FLASH,
+    "reflection": GEMINI_FLASH,
+    "report_writing": GEMINI_FLASH,
+    "financial_analysis": GEMINI_FLASH,
+    # Fast / search tasks → Groq Llama
+    "research": GROQ_LLAMA,
+    "technical_analysis": GROQ_LLAMA,
+    "quick_summary": GROQ_LLAMA,
 }
+
+DEFAULT_MODEL = GEMINI_FLASH
 
 
 def get_model(task: str = "planning", temperature: float = 0.7) -> ChatLiteLLM:
