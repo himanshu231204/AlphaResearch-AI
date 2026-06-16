@@ -3,12 +3,21 @@
 All model access goes through this module — never instantiate providers directly.
 Uses langchain-litellm (ChatLiteLLM) for unified routing across providers.
 
-Routing strategy (v2 — avoids Gemini free-tier exhaustion):
-  - Most tasks → OpenRouter free models (generous quotas)
-  - Gemini Flash → reserved for quick summaries only
-  - Groq → fast search/technical tasks
+Routing strategy (v3 — verified working June 2026):
+  - Most tasks → OpenRouter Nex (free, verified working)
+  - Research/Technical → Groq Llama 3.3 (free, fast)
+  - Quick summary → Gemini Flash (limited quota, low risk)
   - Every model gets max_retries=6 with exponential backoff
   - InMemoryRateLimiter prevents burst flooding
+  - max_tokens=4096 on all models (free-tier budget cap)
+
+Verified working (June 2026):
+  [OK] openrouter/nex-agi/nex-n2-pro:free
+  [OK] groq/llama-3.3-70b-versatile
+  [OK] gemini/gemini-2.5-flash
+  [FAIL] openrouter/free -> 502 from broken "Stealth" provider in pool
+  [FAIL] openrouter/qwen/qwen3-235b-a22b:free -> no longer free
+  [FAIL] openrouter/meta-llama/llama-3.3-70b-instruct:free -> rate limited
 
 Rate limit handling:
   - LiteLLM retries 429/5xx automatically with exponential backoff
@@ -28,19 +37,16 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Model aliases (litellm format — used by ChatLiteLLM)
+# Only verified working free models (June 2026)
 # ---------------------------------------------------------------------------
 GEMINI_FLASH = "gemini/gemini-2.5-flash"
 GROQ_LLAMA = "groq/llama-3.3-70b-versatile"
 OPENROUTER_NEX = "openrouter/nex-agi/nex-n2-pro:free"
-OPENROUTER_FREE = "openrouter/meta-llama/llama-3.3-70b-instruct:free"
-OPENROUTER_QWEN = "openrouter/qwen/qwen3-235b-a22b:free"
 
 # Model aliases (init_chat_model format — used by deepagents create_deep_agent)
 GEMINI_FLASH_INIT = "google_genai:gemini-2.5-flash"
 GROQ_LLAMA_INIT = "groq:llama-3.3-70b-versatile"
 OPENROUTER_NEX_INIT = "openrouter:nex-agi/nex-n2-pro"
-OPENROUTER_FREE_INIT = "openrouter:meta-llama/llama-3.3-70b-instruct"
-OPENROUTER_QWEN_INIT = "openrouter:qwen/qwen3-235b-a22b"
 
 # ---------------------------------------------------------------------------
 # Rate limiter — shared across all models to prevent burst flooding
@@ -54,18 +60,18 @@ _RATE_LIMITER = InMemoryRateLimiter(
 
 # ---------------------------------------------------------------------------
 # Task → primary model mapping
-# Avoids Gemini free tier (20 req/day) — use OpenRouter/Groq for most tasks
+# Only verified working free models (June 2026)
 # ---------------------------------------------------------------------------
 MODEL_ROUTING = {
-    # Planning / reasoning → OpenRouter Qwen (large free model)
-    "planning": OPENROUTER_QWEN,
-    # Reflection → OpenRouter Free (avoids Gemini quota)
-    "reflection": OPENROUTER_FREE,
-    # Report writing → OpenRouter Nex (free)
+    # Planning / reasoning → OpenRouter Nex (verified free)
+    "planning": OPENROUTER_NEX,
+    # Reflection → OpenRouter Nex
+    "reflection": OPENROUTER_NEX,
+    # Report writing → OpenRouter Nex
     "report_writing": OPENROUTER_NEX,
-    # Financial analysis → OpenRouter Nex (free)
+    # Financial analysis → OpenRouter Nex
     "financial_analysis": OPENROUTER_NEX,
-    # Fast / search tasks → Groq (fastest)
+    # Fast / search tasks → Groq (fastest, free)
     "research": GROQ_LLAMA,
     "technical_analysis": GROQ_LLAMA,
     # Quick summary → Gemini Flash (only 1 call, low risk)
@@ -76,13 +82,12 @@ MODEL_ROUTING = {
 # Fallback chain — tried in order when primary fails
 # ---------------------------------------------------------------------------
 FALLBACK_CHAIN = [
-    OPENROUTER_FREE,    # 1st fallback: OpenRouter Llama 3.3
-    OPENROUTER_NEX,     # 2nd fallback: OpenRouter Nex
-    GROQ_LLAMA,         # 3rd fallback: Groq
+    GROQ_LLAMA,         # 1st fallback: Groq (fast, free)
+    OPENROUTER_NEX,     # 2nd fallback: OpenRouter Nex (free)
     GEMINI_FLASH,       # last resort: Gemini (limited quota)
 ]
 
-DEFAULT_MODEL = OPENROUTER_FREE
+DEFAULT_MODEL = GROQ_LLAMA
 
 
 def _build_model(
