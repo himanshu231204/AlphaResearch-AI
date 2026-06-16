@@ -21,7 +21,8 @@ def test_research_state_has_required_fields():
     assert expected_fields == set(annotations.keys())
 
 
-def test_reflection_stops_after_max_cycles():
+@pytest.mark.asyncio
+async def test_reflection_stops_after_max_cycles():
     """Test reflection stops after 3 cycles."""
     from agents.supervisor import reflection_node
 
@@ -32,7 +33,7 @@ def test_reflection_stops_after_max_cycles():
         "cycle_count": 3,
     }
 
-    result = reflection_node(state)
+    result = await reflection_node(state)
 
     assert result["reflection_feedback"] == "RESEARCH_COMPLETE"
 

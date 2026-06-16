@@ -53,9 +53,7 @@ async def run_research(request: ResearchRequest):
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
     try:
-        from agents.supervisor import build_graph
-
-        graph = build_graph()
+        from agents.supervisor import graph
 
         # Use ainvoke to avoid blocking the event loop — graph.invoke()
         # inside an async endpoint starves asyncio and triggers CancelledError.
@@ -104,9 +102,7 @@ async def run_comparison(request: CompareRequest):
     query = f"Compare {request.company_a} ({request.ticker_a}) with {request.company_b} ({request.ticker_b})"
 
     try:
-        from agents.supervisor import build_graph
-
-        graph = build_graph()
+        from agents.supervisor import graph
 
         # Use ainvoke — same reason as run_research above.
         result = await graph.ainvoke(

@@ -259,6 +259,10 @@ async def research_node(state: ResearchState) -> dict:
             "research_findings": findings,
             "sources": _extract_sources(findings),
         }
+    except asyncio.CancelledError:
+        # Re-raise so LangGraph's retry policy and runner handle it correctly.
+        # Swallowing CancelledError breaks timeout propagation and shutdown.
+        raise
     except Exception as e:
         logger.error("Research agent failed: %s", e)
         return {"research_findings": f"Research failed: {e}", "sources": []}
@@ -290,6 +294,8 @@ async def financial_node(state: ResearchState) -> dict:
         return {
             "financial_metrics": {"analysis": analysis},
         }
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         logger.error("Financial agent failed: %s", e)
         return {"financial_metrics": {"error": str(e)}}
@@ -322,6 +328,8 @@ async def technical_node(state: ResearchState) -> dict:
         return {
             "technical_analysis": {"analysis": analysis},
         }
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         logger.error("Technical agent failed: %s", e)
         return {"technical_analysis": {"error": str(e)}}
@@ -335,16 +343,31 @@ def aggregate_node(state: ResearchState) -> dict:
     """Synchronization point after parallel research+financial and technical branches.
 
     Both branches have already written their results to state.
-    This node ensures all data is consolidated before routing forward.
+    This node verifies all data is present before routing forward.
+    Fails fast if critical analysis data is missing to avoid garbage reports.
     """
     # Verify both branches completed
     financial = state.get("financial_metrics", {})
     technical = state.get("technical_analysis", {})
+    research = state.get("research_findings", "")
 
-    if not financial:
-        logger.warning("Financial analysis missing at aggregation point")
-    if not technical:
-        logger.warning("Technical analysis missing at aggregation point")
+    errors = []
+    if not financial or "error" in str(financial).lower():
+        errors.append("Financial analysis is missing or contains errors")
+    if not technical or "error" in str(technical).lower():
+        errors.append("Technical analysis is missing or contains errors")
+    if not research or len(str(research)) < 50:
+        errors.append("Research findings are missing or too brief")
+
+    if errors:
+        # Write a clear error state so downstream nodes (writer) know data is incomplete
+        return {
+            "final_report": (
+                "## Research Failed\n\n"
+                "The following critical data was missing:\n"
+                + "\n".join(f"- {e}" for e in errors)
+            ),
+        }
 
     # State is already updated by child nodes — no additional work needed
     return {}
@@ -389,6 +412,8 @@ async def comparison_node(state: ResearchState) -> dict:
         return {
             "comparison_results": {"analysis": analysis},
         }
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         logger.error("Comparison agent failed: %s", e)
         return {"comparison_results": {"error": str(e)}}
@@ -588,11 +613,16 @@ def route_after_supervisor(
 def route_after_aggregation(
     state: ResearchState,
 ) -> str:
-    """After all analysis branches complete, route based on query type.
+    """After all analysis branches complete, route based on state.
 
-    Comparison queries go to the comparison agent.
-    Single-stock queries go directly to reflection.
+    If aggregate_node already wrote an error report (missing data),
+    skip reflection and writer — go straight to END.
+    Otherwise, route based on query type.
     """
+    # If aggregate already wrote a failure report, skip remaining nodes
+    if state.get("final_report", "").startswith("## Research Failed"):
+        return "__end__"
+
     if state.get("query_type") == "comparison":
         return "comparison"
     return "reflection"
@@ -788,11 +818,11 @@ def build_graph(use_platform_persistence: bool = False):
     builder.add_edge("research_analysis", "aggregate")
     builder.add_edge("technical_analysis", "aggregate")
 
-    # After aggregate: comparison or reflection
+    # After aggregate: comparison, reflection, or END (on error)
     builder.add_conditional_edges(
         "aggregate",
         route_after_aggregation,
-        {"comparison": "comparison", "reflection": "reflection"},
+        {"comparison": "comparison", "reflection": "reflection", "__end__": END},
     )
 
     # Comparison feeds into reflection

@@ -36,10 +36,10 @@ class ResearchState(TypedDict):
     sources: Annotated[list[str], operator.add]
     final_report: Annotated[str, str_replace]
     reflection_feedback: Annotated[str, str_replace]
-    cycle_count: int
+    cycle_count: Annotated[int, str_replace]
 
     # Phase 2: Technical analysis, reflection loops, company comparison
     query_type: Annotated[str, str_replace]
     technical_analysis: Annotated[dict, dict_merge]
     comparison_results: Annotated[dict, dict_merge]
-    target_companies: list[dict]       # [{"company": "...", "ticker": "..."}]
+    target_companies: Annotated[list[dict], str_replace]
