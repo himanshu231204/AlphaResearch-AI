@@ -200,6 +200,10 @@ async def supervisor_node(state: ResearchState, config: RunnableConfig = None) -
             SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT),
             HumanMessage(content=query),
         ])
+    except asyncio.CancelledError:
+        # Re-raise so LangGraph's retry policy and runner handle it correctly.
+        # Swallowing CancelledError breaks timeout propagation and shutdown.
+        raise
     except Exception as e:
         logger.error("Supervisor LLM failed, falling back to defaults: %s", e)
         plan = QueryPlan(
@@ -524,31 +528,60 @@ def _fallback_reflection(state: ResearchState, cycle_count: int) -> dict:
 async def writer_node(state: ResearchState) -> dict:
     """Generate the final research report.
 
-    Phase 3B: Interrupts for human-in-the-loop approval before generation.
-    The interrupt payload surfaces to Agent Chat UI for user decision.
+    Uses a two-phase pattern for Agent Chat UI compatibility:
+      Phase 1 (first run): Return placeholder AIMessage, then interrupt().
+        The return statement ADDS the placeholder to state BEFORE the
+        interrupt pauses execution. The UI sees the message immediately.
+      Phase 2 (after resume): Generate the full report and return it.
+        The add_messages reducer deduplicates by message ID, so the
+        placeholder is replaced by the final report.
 
-    Also appends the report as an AIMessage to the messages list so the
-    Agent Chat UI can display it.
+    Key LangGraph behavior:
+      - interrupt() suspends execution at that exact line
+      - State is saved at the LAST return, not at the interrupt point
+      - On resume, the node re-runs from the beginning
+      - Code before interrupt() runs again on resume
     """
     from langchain_core.messages import AIMessage
 
-    # Phase 3B: Interrupt for user approval before generating report
+    company = state.get("company", "Unknown")
+    ticker = state.get("ticker", "N/A")
+    query_type = state.get("query_type", "single_stock")
+
+    # Use a deterministic ID so add_messages deduplicates on resume
+    _WRITER_MSG_ID = "writer-report-placeholder"
+
+    # --- Phase 1: Return placeholder, then interrupt ---
+    # The return BEFORE interrupt ensures the placeholder is in state
+    # when the graph pauses. Without this, the UI shows nothing.
+    placeholder = AIMessage(
+        id=_WRITER_MSG_ID,
+        content=(
+            f"## Research Report: {company} ({ticker})\n\n"
+            f"Analysis complete. Report generation pending your approval.\n\n"
+            f"**Query type:** {query_type}\n"
+            f"**Sources found:** {len(state.get('sources', []))}"
+        ),
+    )
+
+    # Return FIRST — this adds the placeholder to state
+    # Then interrupt — graph pauses, UI shows approval card
     approval = interrupt({
         "action": "generate_report",
-        "company": state.get("company", ""),
-        "ticker": state.get("ticker", "N/A"),
-        "query_type": state.get("query_type", "single_stock"),
+        "company": company,
+        "ticker": ticker,
+        "query_type": query_type,
         "preview": (
-            f"A comprehensive research report for {state.get('company', 'Unknown')} "
-            f"({state.get('ticker', 'N/A')}) will be generated based on the collected "
-            f"analysis data. Approve to proceed."
+            f"A comprehensive research report for {company} ({ticker}) "
+            f"will be generated based on the collected analysis data. "
+            f"Approve to proceed."
         ),
     })
 
-    # If user rejects, return early
+    # --- Phase 2: After resume, generate the actual report ---
     if approval is False or approval == "reject":
-        reject_msg = AIMessage(content="Report generation cancelled by user.")
-        return {"final_report": "Report generation cancelled by user.", "messages": [reject_msg]}
+        cancel_msg = AIMessage(content="Report generation cancelled by user.")
+        return {"final_report": "Report generation cancelled by user.", "messages": [cancel_msg]}
 
     chain = create_writer_chain()
 
@@ -584,8 +617,8 @@ async def writer_node(state: ResearchState) -> dict:
 
     try:
         report = await chain.ainvoke({
-            "company": state.get("company", "Unknown"),
-            "ticker": state.get("ticker", "N/A"),
+            "company": company,
+            "ticker": ticker,
             "research_findings": state.get("research_findings", ""),
             "financial_metrics": financial_text,
             "technical_analysis": technical_text,
@@ -595,11 +628,15 @@ async def writer_node(state: ResearchState) -> dict:
             "sources": sources_text,
         })
 
-        ai_msg = AIMessage(content=report)
-        return {"final_report": report, "messages": [ai_msg]}
+        # Same ID as placeholder — add_messages replaces, not appends
+        report_msg = AIMessage(id=_WRITER_MSG_ID, content=report)
+        return {"final_report": report, "messages": [report_msg]}
     except Exception as e:
         logger.error("Writer agent failed: %s", e)
-        error_msg = AIMessage(content=f"Report generation failed: {e}")
+        error_msg = AIMessage(
+            id=_WRITER_MSG_ID,
+            content=f"Report generation failed: {e}",
+        )
         return {"final_report": f"Report generation failed: {e}", "messages": [error_msg]}
 
 
@@ -801,7 +838,7 @@ def build_graph(use_platform_persistence: bool = False):
     technical_subgraph = build_technical_analysis_subgraph()
 
     # Nodes — subgraphs added via add_node() for automatic state mapping
-    builder.add_node("supervisor", supervisor_node)
+    builder.add_node("supervisor", supervisor_node, retry_policy=_AGENT_RETRY, timeout=_AGENT_TIMEOUT)
     builder.add_node("research_analysis", research_subgraph)
     builder.add_node("technical_analysis", technical_subgraph)
     builder.add_node("aggregate", aggregate_node)
