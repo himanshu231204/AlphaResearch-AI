@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     # Model provider keys
     gemini_api_key: str = ""
+    groq_api_key: str = ""
     xai_api_key: str = ""
     litellm_master_key: str = ""
 

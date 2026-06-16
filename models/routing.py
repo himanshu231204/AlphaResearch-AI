@@ -4,25 +4,26 @@ All model access goes through this module — never instantiate providers direct
 Uses langchain-litellm (ChatLiteLLM) for unified routing across providers.
 
 Model string format (LiteLLM convention):
-  provider/model-name  (e.g., "gemini/gemini-2.5-pro")
+  provider/model-name  (e.g., "groq/llama-3.3-70b-versatile")
 
+Default: Groq Llama 3.3 70B (free, fast, no vendor lock-in)
 See: https://docs.langchain.com/oss/python/integrations/chat/litellm
 """
 
 from langchain_litellm import ChatLiteLLM
 
-# Task → model mapping per AGENTS.md
-MODEL_ROUTING = {
-    "planning": "gemini/gemini-2.5-pro",
-    "research": "xai/grok-3",
-    "financial_analysis": "gemini/gemini-2.5-pro",
-    "technical_analysis": "xai/grok-3",
-    "reflection": "gemini/gemini-2.5-pro",
-    "report_writing": "gemini/gemini-2.5-pro",
-    "quick_summary": "gemini/gemini-2.0-flash",
-}
+# Task → model mapping (all tasks use free Groq Llama 3.3 70B)
+DEFAULT_MODEL = "groq/llama-3.3-70b-versatile"
 
-DEFAULT_MODEL = "gemini/gemini-2.5-pro"
+MODEL_ROUTING = {
+    "planning": DEFAULT_MODEL,
+    "research": DEFAULT_MODEL,
+    "financial_analysis": DEFAULT_MODEL,
+    "technical_analysis": DEFAULT_MODEL,
+    "reflection": DEFAULT_MODEL,
+    "report_writing": DEFAULT_MODEL,
+    "quick_summary": DEFAULT_MODEL,
+}
 
 
 def get_model(task: str = "planning", temperature: float = 0.7) -> ChatLiteLLM:
