@@ -526,7 +526,12 @@ async def writer_node(state: ResearchState) -> dict:
 
     Phase 3B: Interrupts for human-in-the-loop approval before generation.
     The interrupt payload surfaces to Agent Chat UI for user decision.
+
+    Also appends the report as an AIMessage to the messages list so the
+    Agent Chat UI can display it.
     """
+    from langchain_core.messages import AIMessage
+
     # Phase 3B: Interrupt for user approval before generating report
     approval = interrupt({
         "action": "generate_report",
@@ -542,7 +547,8 @@ async def writer_node(state: ResearchState) -> dict:
 
     # If user rejects, return early
     if approval is False or approval == "reject":
-        return {"final_report": "Report generation cancelled by user."}
+        reject_msg = AIMessage(content="Report generation cancelled by user.")
+        return {"final_report": "Report generation cancelled by user.", "messages": [reject_msg]}
 
     chain = create_writer_chain()
 
@@ -589,10 +595,12 @@ async def writer_node(state: ResearchState) -> dict:
             "sources": sources_text,
         })
 
-        return {"final_report": report}
+        ai_msg = AIMessage(content=report)
+        return {"final_report": report, "messages": [ai_msg]}
     except Exception as e:
         logger.error("Writer agent failed: %s", e)
-        return {"final_report": f"Report generation failed: {e}"}
+        error_msg = AIMessage(content=f"Report generation failed: {e}")
+        return {"final_report": f"Report generation failed: {e}", "messages": [error_msg]}
 
 
 # ---------------------------------------------------------------------------
