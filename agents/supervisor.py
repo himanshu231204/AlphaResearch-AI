@@ -51,11 +51,12 @@ _AGENT_RETRY = RetryPolicy(
     retry_on=(Exception,),    # retry on any exception
 )
 
-# Timeout policy for long-running agent nodes — prevents indefinite hangs
-# that lead to CancelledError when the event loop is stressed.
+# Timeout policy for long-running agent nodes — prevents indefinite hangs.
+# Kept generous because research agents make multiple sequential LLM calls
+# and web searches that can easily exceed tight limits.
 _AGENT_TIMEOUT = TimeoutPolicy(
-    run_timeout=180,          # hard wall-clock limit: 3 minutes per attempt
-    idle_timeout=60,          # reset on progress; fire if stuck for 60s
+    run_timeout=600,          # hard wall-clock limit: 10 minutes per attempt
+    idle_timeout=120,         # reset on progress; fire if stuck for 2 minutes
 )
 
 
@@ -170,6 +171,19 @@ async def supervisor_node(state: ResearchState, config: RunnableConfig = None) -
             if isinstance(msg, _HM) or getattr(msg, "type", None) == "human":
                 query = msg.content if isinstance(msg, _HM) else msg.get("content", "")
                 break
+
+    # Ensure query is a plain string — LLM providers may return content as
+    # [{"type": "text", "text": "..."}] block lists instead of raw strings.
+    if isinstance(query, list):
+        for _block in query:
+            if isinstance(_block, dict) and _block.get("type") == "text":
+                query = _block["text"]
+                break
+            if isinstance(_block, str):
+                query = _block
+                break
+        else:
+            query = str(query)
 
     if not query:
         query = "Analyze Apple (AAPL)"

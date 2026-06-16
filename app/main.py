@@ -26,9 +26,11 @@ async def lifespan(app: FastAPI):
     """
     logger.info("AlphaResearch AI starting up")
     yield
-    # On shutdown: give running tasks a brief window to complete
+    # On shutdown: give running tasks a window to complete.
+    # Research agents can take several minutes, but 5s is enough for
+    # in-progress LLM calls to finish their current response.
     logger.info("AlphaResearch AI shutting down — draining in-flight requests")
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(5)
 
 
 app = FastAPI(

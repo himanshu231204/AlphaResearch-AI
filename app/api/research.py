@@ -1,5 +1,6 @@
 """Research API endpoint."""
 
+import asyncio
 import logging
 from pydantic import BaseModel
 
@@ -77,6 +78,12 @@ async def run_research(request: ResearchRequest):
             status="completed",
         )
 
+    except asyncio.CancelledError:
+        logger.warning("Research request was cancelled (client disconnect or shutdown)")
+        raise HTTPException(
+            status_code=499,  # 499 = client closed request
+            detail="Research was cancelled",
+        )
     except Exception as e:
         logger.error("Research failed: %s", e, exc_info=True)
         raise HTTPException(
@@ -121,6 +128,12 @@ async def run_comparison(request: CompareRequest):
             status="completed",
         )
 
+    except asyncio.CancelledError:
+        logger.warning("Comparison request was cancelled (client disconnect or shutdown)")
+        raise HTTPException(
+            status_code=499,
+            detail="Comparison was cancelled",
+        )
     except Exception as e:
         logger.error("Comparison failed: %s", e, exc_info=True)
         raise HTTPException(
