@@ -4,9 +4,10 @@ All model access goes through this module — never instantiate providers direct
 Uses langchain-litellm (ChatLiteLLM) for unified routing across providers.
 
 Routing strategy:
-  - Logical/reasoning tasks → Gemini 2.5 Flash (strong reasoning, free tier)
-  - Financial analysis → OpenRouter Nex N2 Pro (free) with Gemini Flash fallback
-  - Fast/search tasks → Groq Llama 3.3 70B (fast, free)
+  - Logical/reasoning tasks → Gemini 2.5 Flash
+  - Financial analysis → OpenRouter Nex N2 Pro (free)
+  - Fast/search tasks → Groq Llama 3.3 70B
+  - Universal fallback → OpenRouter free model → Gemini Flash
 
 See: https://docs.langchain.com/oss/python/integrations/chat/litellm
 """
@@ -21,14 +22,15 @@ logger = logging.getLogger(__name__)
 GEMINI_FLASH = "gemini/gemini-2.5-flash"
 GROQ_LLAMA = "groq/llama-3.3-70b-versatile"
 OPENROUTER_NEX = "openrouter/nex-agi/nex-n2-pro:free"
+OPENROUTER_FREE = "openrouter/meta-llama/llama-3.3-70b-instruct:free"
 
-# Task → model mapping
+# Task → model mapping (primary models)
 MODEL_ROUTING = {
     # Logical / reasoning tasks → Gemini Flash
     "planning": GEMINI_FLASH,
     "reflection": GEMINI_FLASH,
     "report_writing": GEMINI_FLASH,
-    # Financial analysis → OpenRouter Nex (free) with Gemini Flash fallback
+    # Financial analysis → OpenRouter Nex (free)
     "financial_analysis": OPENROUTER_NEX,
     # Fast / search tasks → Groq Llama
     "research": GROQ_LLAMA,
@@ -36,15 +38,13 @@ MODEL_ROUTING = {
     "quick_summary": GROQ_LLAMA,
 }
 
-# Fallback model when primary fails
-FALLBACK_MODEL = GEMINI_FLASH
+# Fallback chain: OpenRouter Free → Gemini Flash
+FALLBACK_MODELS = [OPENROUTER_FREE, GEMINI_FLASH]
 DEFAULT_MODEL = GEMINI_FLASH
 
 
 def get_model(task: str = "planning", temperature: float = 0.7) -> ChatLiteLLM:
     """Get a ChatLiteLLM model instance for the specified task.
-
-    If the primary model fails to initialize, falls back to Gemini Flash.
 
     Args:
         task: The task type — determines which model to route to.
@@ -62,17 +62,26 @@ def get_model(task: str = "planning", temperature: float = 0.7) -> ChatLiteLLM:
 
 
 def get_model_with_fallback(task: str = "planning", temperature: float = 0.7) -> ChatLiteLLM:
-    """Get model with automatic fallback to Gemini Flash on failure.
+    """Get model with automatic fallback chain for reliability.
 
-    Use this for critical tasks like financial analysis where the primary
-    model (OpenRouter) may have intermittent availability.
+    Fallback chain: Primary → OpenRouter Free → Gemini Flash
     """
     primary_name = MODEL_ROUTING.get(task, DEFAULT_MODEL)
 
+    # Try primary model
     try:
-        model = ChatLiteLLM(model=primary_name, temperature=temperature)
-        return model
+        return ChatLiteLLM(model=primary_name, temperature=temperature)
     except Exception as e:
-        logger.warning("Primary model %s failed for task '%s': %s — falling back to %s",
-                       primary_name, task, e, FALLBACK_MODEL)
-        return ChatLiteLLM(model=FALLBACK_MODEL, temperature=temperature)
+        logger.warning("Primary model %s failed for '%s': %s", primary_name, task, e)
+
+    # Try fallback chain
+    for fallback_name in FALLBACK_MODELS:
+        try:
+            logger.info("Trying fallback model %s for task '%s'", fallback_name, task)
+            return ChatLiteLLM(model=fallback_name, temperature=temperature)
+        except Exception as e:
+            logger.warning("Fallback model %s also failed for '%s': %s", fallback_name, task, e)
+
+    # Last resort
+    logger.error("All models failed for task '%s', using Gemini Flash", task)
+    return ChatLiteLLM(model=GEMINI_FLASH, temperature=temperature)
