@@ -27,8 +27,13 @@ dependencies = [
     "numpy",
     # Technical Analysis
     "ta",
-    # Search
+    # Search (free)
     "httpx",
+    "ddgs",
+    "langchain-community",
+    # MCP integration (remote web search server)
+    "langchain-mcp-adapters",
+    "mcp",
     # Vector DB (Phase 1 stub)
     "langchain-chroma",
     "chromadb",
