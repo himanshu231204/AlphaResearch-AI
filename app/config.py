@@ -11,7 +11,6 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     openrouter_api_key: str = ""
     xai_api_key: str = ""
-    litellm_master_key: str = ""
 
     # Financial data APIs
     finnhub_api_key: str = ""
