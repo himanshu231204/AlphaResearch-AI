@@ -224,5 +224,10 @@ __marimo__/
 # LangGraph API checkpoints
 .langgraph_api/
 
-# Frontend (separate git repository)
-frontend/
+# Frontend build artifacts (track source, ignore outputs)
+frontend/node_modules/
+frontend/.next/
+frontend/.langgraph_api/
+frontend/dist/
+frontend/.env
+frontend/next-env.d.ts
