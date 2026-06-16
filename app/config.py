@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     alpha_vantage_api_key: str = ""
 
     # Search APIs
+    tavily_api_key: str = ""
     google_search_api_key: str = ""
     google_search_cx: str = ""
     brave_search_api_key: str = ""

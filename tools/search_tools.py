@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 
 MCP_WEB_SEARCH_URL = "https://mcp-web-search-nwgd.onrender.com/mcp"
 
+# ---------------------------------------------------------------------------
+# Tavily Search (AI-optimized, remote MCP server)
+# ---------------------------------------------------------------------------
+
+TAVILY_MCP_URL = "https://mcp.tavily.com/mcp"
+
 
 @tool
 def web_search(query: str, num_results: int = 10) -> str:
@@ -111,6 +117,136 @@ def fetch_web_page(url: str) -> str:
     except Exception as e:
         logger.error("MCP fetch_page failed: %s", e)
         return f"Failed to fetch {url}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Tavily Search — AI-optimized search (remote MCP server)
+# ---------------------------------------------------------------------------
+
+def _tavily_mcp_call(tool_name: str, arguments: dict) -> dict:
+    """Call a tool on the Tavily remote MCP server via JSON-RPC."""
+    if not settings.tavily_api_key:
+        raise ValueError("Tavily API key not configured")
+
+    url = f"{TAVILY_MCP_URL}/?tavilyApiKey={settings.tavily_api_key}"
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": tool_name, "arguments": arguments},
+    }
+
+    response = httpx.post(
+        url,
+        json=payload,
+        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+        timeout=25,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+@tool
+def tavily_search(query: str, search_depth: str = "advanced", max_results: int = 10) -> str:
+    """Search the web using Tavily — AI-optimized search engine for agents.
+
+    Tavily returns clean, structured summaries optimized for LLM consumption.
+    Requires TAVILY_API_KEY to be configured. Free tier: 1,000 credits/month.
+
+    Args:
+        query: Search query to execute
+        search_depth: Search depth - "basic" (fast) or "advanced" (thorough, default)
+        max_results: Maximum number of results to return (default: 10)
+
+    Returns:
+        AI-optimized search results with clean summaries.
+    """
+    if not settings.tavily_api_key:
+        return "Tavily API key not configured. Set TAVILY_API_KEY. Get a free key at tavily.com"
+
+    try:
+        data = _tavily_mcp_call("tavily-search", {
+            "query": query,
+            "search_depth": search_depth,
+            "max_results": max_results,
+        })
+
+        # Extract content from JSON-RPC response
+        result = data.get("result", {})
+        content_list = result.get("content", [])
+
+        if not content_list:
+            return f"No Tavily search results for: {query}"
+
+        # Tavily returns content as [{"type": "text", "text": "..."}]
+        text_parts = []
+        for item in content_list:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text_parts.append(item["text"])
+
+        if text_parts:
+            return f"TAVILY SEARCH RESULTS for '{query}':\n\n" + "\n\n".join(text_parts)
+
+        # Fallback: return raw content
+        return f"TAVILY SEARCH RESULTS for '{query}':\n\n{json.dumps(content_list, indent=2)}"
+
+    except ValueError as e:
+        return str(e)
+    except httpx.HTTPStatusError as e:
+        logger.warning("Tavily search HTTP error: %s", e.response.status_code)
+        return f"Tavily search error: HTTP {e.response.status_code}"
+    except Exception as e:
+        logger.warning("Tavily search failed: %s", e)
+        return f"Tavily search error: {e}"
+
+
+@tool
+def tavily_extract(urls: list[str] | str) -> str:
+    """Extract clean content from one or more URLs using Tavily.
+
+    Strips boilerplate and returns clean, readable text optimized for LLMs.
+    Requires TAVILY_API_KEY to be configured.
+
+    Args:
+        urls: URL or list of URLs to extract content from
+
+    Returns:
+        Extracted clean text content from the URL(s).
+    """
+    if not settings.tavily_api_key:
+        return "Tavily API key not configured. Set TAVILY_API_KEY. Get a free key at tavily.com"
+
+    # Normalize input
+    if isinstance(urls, str):
+        urls = [urls]
+
+    try:
+        data = _tavily_mcp_call("tavily-extract", {"urls": urls})
+
+        result = data.get("result", {})
+        content_list = result.get("content", [])
+
+        if not content_list:
+            return f"Failed to extract content from: {urls}"
+
+        text_parts = []
+        for item in content_list:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text_parts.append(item["text"])
+
+        if text_parts:
+            return f"EXTRACTED CONTENT:\n\n" + "\n\n---\n\n".join(text_parts)
+
+        return f"EXTRACTED CONTENT:\n\n{json.dumps(content_list, indent=2)}"
+
+    except ValueError as e:
+        return str(e)
+    except httpx.HTTPStatusError as e:
+        logger.error("Tavily extract HTTP error: %s", e.response.status_code)
+        return f"Tavily extract error: HTTP {e.response.status_code}"
+    except Exception as e:
+        logger.error("Tavily extract failed: %s", e)
+        return f"Tavily extract error: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -276,8 +412,19 @@ def brave_search(query: str, max_results: int = 5) -> str:
 # Tool exports — used by agents
 # ---------------------------------------------------------------------------
 
-# Primary search tools (free, no API key)
+# Primary search tools (free, no API key required)
 PRIMARY_SEARCH_TOOLS = [web_search, duckduckgo_search, fetch_web_page]
 
-# All search tools (includes optional paid APIs)
-ALL_SEARCH_TOOLS = [web_search, duckduckgo_search, fetch_web_page, google_search, brave_search]
+# Tavily search tools (needs API key, free tier: 1000/month)
+TAVILY_TOOLS = [tavily_search, tavily_extract]
+
+# All search tools (everything available)
+ALL_SEARCH_TOOLS = [
+    web_search,
+    duckduckgo_search,
+    fetch_web_page,
+    tavily_search,
+    tavily_extract,
+    google_search,
+    brave_search,
+]
