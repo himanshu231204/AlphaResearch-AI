@@ -89,8 +89,9 @@ def _build_model(
     model_name: str,
     temperature: float = 0.7,
     max_retries: int = 6,
+    max_tokens: int = 4096,
 ) -> ChatLiteLLM:
-    """Build a ChatLiteLLM with retry and rate limiting.
+    """Build a ChatLiteLLM with retry, rate limiting, and output cap.
 
     Args:
         model_name: LiteLLM model identifier.
@@ -98,11 +99,15 @@ def _build_model(
         max_retries: Max retry attempts with exponential backoff.
             LiteLLM retries 429 (rate limit) and 5xx (server errors) automatically.
             Backoff: 1s → 2s → 4s → 8s → 16s → 32s (6 attempts = ~63s total).
+        max_tokens: Max output tokens. Capped at 4096 to stay within free-tier
+            provider token budgets (OpenRouter free ≈ 8k tokens/request).
+            Individual agents should return structured summaries, not full text.
     """
     return ChatLiteLLM(
         model=model_name,
         temperature=temperature,
         max_retries=max_retries,
+        max_tokens=max_tokens,
         rate_limiter=_RATE_LIMITER,
     )
 
