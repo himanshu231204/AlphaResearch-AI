@@ -6,7 +6,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Production-000000.svg?style=for-the-badge&logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
-[![DeepAgents](https://img.shields.io/badge/DeepAgents-Autonomous-4A90D9.svg?style=for-the-badge)](https://github.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688.svg?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-24%20Passed-brightgreen.svg?style=for-the-badge)](#testing)
 
@@ -60,12 +60,16 @@ flowchart TD
     E --> F
     D --> F
 
-    F["<b>Aggregate</b><br/>Merge findings"]
-    F --> G
-    G["<b>Reflection Loop</b><br/>Gemini 2.5 Flash<br/><i>Max 3 cycles</i>"]
-    G -->|"Issues found"| B
-    G -->|"Approved"| H
-    H["<b>Writer Agent</b><br/><i>Human-in-the-Loop ✓</i>"]
+    F["<b>Aggregate</b><br/>Verify data completeness"]
+    F -->|"Missing data"| ERR["<b>Error Report</b>"]
+    F -->|"Data OK"| G
+    G{"Query Type?"}
+    G -->|"comparison"| CMP["<b>Comparison Agent</b>"]
+    G -->|"single_stock"| REF["<b>Reflection Loop</b><br/><i>Max 3 cycles</i>"]
+    CMP --> REF
+    REF -->|"Issues found"| B
+    REF -->|"Approved"| H
+    H["<b>Writer Agent</b><br/><i>Human-in-the-Loop</i>"]
     H --> I["<b>Research Report</b>"]
 
     style A fill:#1a1a2e,stroke:#e94560,color:#fff,stroke-width:2px
@@ -74,6 +78,7 @@ flowchart TD
     style G fill:#533483,stroke:#e94560,color:#fff,stroke-width:2px
     style H fill:#16213e,stroke:#0f3460,color:#fff,stroke-width:2px
     style I fill:#0f3460,stroke:#e94560,color:#fff,stroke-width:2px
+    style ERR fill:#e94560,stroke:#fff,color:#fff,stroke-width:2px
 
     style RESEARCH fill:#0d1b2a,stroke:#1b263b,color:#fff
     style TECHNICAL fill:#0d1b2a,stroke:#1b263b,color:#fff
@@ -85,7 +90,8 @@ flowchart TD
 - **Agent Driven** — specialist agents handle their domain, supervisor orchestrates
 - **Reflection Based** — LLM reviews findings for quality before report generation
 - **Parallel Execution** — research and technical branches run simultaneously
-- **Fault Tolerant** — automatic retry with exponential backoff on API failures
+- **Fault Tolerant** — automatic retry with exponential backoff, generous timeouts (10 min run / 2 min idle)
+- **Fail-Fast Aggregation** — missing data produces a clear error report instead of garbage output
 - **Human-in-the-Loop** — approval step before report generation
 
 ---
@@ -201,11 +207,7 @@ Run autonomous equity research on a single company.
     "https://www.reuters.com/technology/apple-..."
   ],
   "technical_analysis": {
-    "rsi": 62.4,
-    "macd": "bullish",
-    "trend": "uptrend",
-    "support": 178.50,
-    "resistance": 195.20
+    "analysis": "RSI: 62.4 (neutral), MACD: bullish crossover..."
   },
   "comparison_results": {},
   "status": "completed"
@@ -273,12 +275,55 @@ Tools fall back automatically — if MCP server is unreachable, it uses local Du
 
 ---
 
+## Fault Tolerance
+
+The system implements multiple layers of fault tolerance:
+
+### Retry Policy
+
+All agent nodes use exponential backoff retry (3 attempts, 1s → 2s → 4s).
+
+### Timeout Policy
+
+| Parameter | Value | Purpose |
+|:--|:--|:--|
+| `run_timeout` | 600s (10 min) | Hard wall-clock limit per attempt |
+| `idle_timeout` | 120s (2 min) | Reset on progress; fire if stuck |
+
+### CancelledError Handling
+
+In Python 3.11+, `asyncio.CancelledError` is a `BaseException`, not `Exception`. The system handles this at three levels:
+
+1. **Agent nodes** — re-raise `CancelledError` so LangGraph's retry policy handles it
+2. **API endpoints** — catch `CancelledError` and return HTTP 499 (client closed request)
+3. **Lifespan handler** — 5-second drain window on shutdown to let in-flight requests finish
+
+### Fail-Fast Aggregation
+
+The aggregate node verifies data completeness before routing forward. If any critical branch failed (research, financial, or technical), it writes a clear error report and skips the reflection and writer nodes entirely.
+
+### Graceful Degradation
+
+When an agent fails after all retries:
+
+| Agent | Fallback Behavior |
+|:--|:--|
+| **Supervisor** | Falls back to regex-based query parsing (no LLM) |
+| **Research** | Returns error string + empty sources list |
+| **Financial** | Returns `{"error": "..."}` in `financial_metrics` |
+| **Technical** | Returns `{"error": "..."}` in `technical_analysis` |
+| **Comparison** | Returns `{"error": "..."}` in `comparison_results` |
+| **Reflection** | Uses basic length/completeness checks instead of LLM |
+| **Writer** | Returns error message instead of report |
+
+---
+
 ## Project Structure
 
 ```
 AlphaResearch-AI/
 ├── app/                        # FastAPI backend
-│   ├── main.py                 # App entry point
+│   ├── main.py                 # App entry point with lifespan handler
 │   ├── config.py               # Settings (pydantic-settings)
 │   └── api/
 │       └── research.py         # /api/research, /api/compare endpoints
@@ -290,7 +335,7 @@ AlphaResearch-AI/
 │   ├── comparison_agent.py     # Company comparison agent
 │   └── writer.py               # Report generation chain
 ├── models/                     # State & routing
-│   ├── state.py                # ResearchState TypedDict
+│   ├── state.py                # ResearchState TypedDict with reducers
 │   └── routing.py              # LiteLLM model routing
 ├── tools/                      # LangChain tools
 │   ├── search_tools.py         # 7 search tools (MCP, DDG, Tavily, etc.)
@@ -302,13 +347,23 @@ AlphaResearch-AI/
 ├── rag/                        # RAG pipeline
 │   └── chroma_store.py         # ChromaDB vector store (Phase 4 ready)
 ├── memory/                     # Memory modules
-├── reports/                    # Generated reports
-├── tests/                      # Test suite (24 tests)
-│   ├── test_agents.py
-│   ├── test_api.py
-│   ├── test_tools.py
-│   ├── test_technical.py
-│   └── test_comparison.py
+├── tests/                      # Test suite
+│   ├── test_agents.py          # Graph structure, routing, state, reflection
+│   ├── test_api.py             # REST endpoints
+│   ├── test_tools.py           # Financial tools, search tools
+│   ├── test_technical.py       # RSI, MACD, Bollinger, support/resistance
+│   └── test_comparison.py      # Financial, technical, valuation comparison
+├── doc/                        # Technical documentation
+│   ├── architecture.md         # Agent hierarchy, graph structure, state schema
+│   ├── api.md                  # REST endpoints, request/response schemas
+│   ├── model-routing.md        # Task-to-model mapping, provider config
+│   ├── model-fallback.md       # Fallback chains, retry policies
+│   ├── network-routing.md      # Service endpoints, connection flows
+│   ├── testing.md              # Test structure, writing tests
+│   ├── troubleshooting.md      # Common errors, debugging tips
+│   ├── deployment.md           # Docker, cloud deployment
+│   ├── prompts.md              # All agent system prompts
+│   └── rag-pipeline.md         # ChromaDB setup, embeddings
 ├── graph.py                    # LangGraph Server entry point
 ├── langgraph.json              # LangGraph Server config
 ├── pyproject.toml              # Dependencies

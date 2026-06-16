@@ -160,7 +160,35 @@ pytest tests/test_agents.py -v --tb=long
 
 ---
 
-### 8. LangGraph Server Won't Start
+### 8. CancelledError During Research
+
+**Error:**
+```
+asyncio.exceptions.CancelledError
+```
+
+**Cause:** The LangGraph async runner raises `CancelledError` when:
+- A node timeout fires (10 min run / 2 min idle)
+- The client disconnects while research is in progress
+- The server shuts down during an active request
+
+**In Python 3.11+**, `CancelledError` derives from `BaseException`, not `Exception`. This means `except Exception` blocks won't catch it.
+
+**Fix:** The system now handles this at three levels:
+1. Agent nodes re-raise `CancelledError` so LangGraph's retry policy handles it
+2. API endpoints catch it and return HTTP 499 (client closed request)
+3. The lifespan handler drains in-flight requests for 5 seconds on shutdown
+
+If you see this error persisting:
+```bash
+# Check if the timeout is too aggressive for your query complexity
+# Default: run_timeout=600s, idle_timeout=120s in agents/supervisor.py
+# You can adjust _AGENT_TIMEOUT for your use case
+```
+
+---
+
+### 9. LangGraph Server Won't Start
 
 **Error:**
 ```
@@ -184,7 +212,7 @@ langgraph dev --host 0.0.0.0 --port 2024
 
 ---
 
-### 9. FastAPI Won't Start
+### 10. FastAPI Won't Start
 
 **Error:**
 ```
@@ -202,7 +230,7 @@ uvicorn app.main:app --reload
 
 ---
 
-### 10. ChromaDB Errors
+### 11. ChromaDB Errors
 
 **Error:**
 ```
@@ -223,10 +251,11 @@ pip install langchain-chroma chromadb langchain-huggingface
 ### Debug a Single Agent
 
 ```python
+import asyncio
 from agents.supervisor import supervisor_node
 
 state = {"user_query": "Analyze Apple Inc", "messages": []}
-result = supervisor_node(state)
+result = asyncio.run(supervisor_node(state))
 print(result)
 ```
 

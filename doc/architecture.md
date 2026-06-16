@@ -161,7 +161,8 @@ flowchart LR
     end
 
     subgraph "route_after_aggregation"
-        A1["aggregate"] -->|"query_type == comparison"| CMP["comparison"]
+        A1["aggregate"] -->|"missing data"| END["__end__"]
+        A1 -->|"query_type == comparison"| CMP["comparison"]
         A1 -->|"query_type == single_stock"| REF["reflection"]
     end
 
@@ -183,20 +184,20 @@ flowchart LR
         direction TB
         M["messages: Annotated[list, add_messages]"]
         UQ["user_query: str"]
-        C["company: str"]
-        T["ticker: str"]
-        QT["query_type: str"]
-        RF["research_findings: str"]
-        FM["financial_metrics: dict"]
-        TA["technical_analysis: dict"]
-        CR["comparison_results: dict"]
-        VR["valuation_results: dict"]
-        RR["risk_results: dict"]
-        S["sources: list[str]"]
-        FR["final_report: str"]
-        RFB["reflection_feedback: str"]
-        CC["cycle_count: int"]
-        TC["target_companies: list[dict]"]
+        C["company: Annotated[str, str_replace]"]
+        T["ticker: Annotated[str, str_replace]"]
+        QT["query_type: Annotated[str, str_replace]"]
+        RF["research_findings: Annotated[str, str_replace]"]
+        FM["financial_metrics: Annotated[dict, dict_merge]"]
+        TA["technical_analysis: Annotated[dict, dict_merge]"]
+        CR["comparison_results: Annotated[dict, dict_merge]"]
+        VR["valuation_results: Annotated[dict, dict_merge]"]
+        RR["risk_results: Annotated[dict, dict_merge]"]
+        S["sources: Annotated[list[str], operator.add]"]
+        FR["final_report: Annotated[str, str_replace]"]
+        RFB["reflection_feedback: Annotated[str, str_replace]"]
+        CC["cycle_count: Annotated[int, str_replace]"]
+        TC["target_companies: Annotated[list[dict], str_replace]"]
     end
 ```
 
@@ -250,8 +251,8 @@ All agent nodes use `RetryPolicy` from LangGraph:
 flowchart LR
     A["Agent Node"] -->|"Exception"| R["RetryPolicy"]
     R -->|"Attempt 1"| A
-    R -->|"Attempt 2<br/>(after 2s)"| A
-    R -->|"Attempt 3<br/>(after 4s)"| A
+    R -->|"Attempt 2<br/>(after 1s)"| A
+    R -->|"Attempt 3<br/>(after 2s)"| A
     R -->|"All failed"| ERR["Error message<br/>in state"]
 ```
 
@@ -261,6 +262,31 @@ flowchart LR
 | `initial_interval` | 1.0s |
 | `backoff_factor` | 2.0 |
 | `retry_on` | `Exception` (all) |
+
+### Timeout Policy
+
+All agent nodes use `TimeoutPolicy` from LangGraph:
+
+| Parameter | Value | Purpose |
+|:--|:--|:--|
+| `run_timeout` | 600s (10 min) | Hard wall-clock limit per attempt |
+| `idle_timeout` | 120s (2 min) | Reset on progress; fire if stuck |
+
+### CancelledError Handling
+
+In Python 3.11+, `asyncio.CancelledError` derives from `BaseException`, not `Exception`. This means:
+- The retry policy's default `retry_on` does **not** catch it
+- `except Exception` blocks do **not** catch it
+
+The system handles this at three levels:
+
+1. **Agent nodes** — explicitly re-raise `CancelledError` so LangGraph's runner handles it
+2. **API endpoints** — catch `CancelledError` and return HTTP 499 (client closed request)
+3. **Lifespan handler** — 5-second drain window on shutdown to let in-flight requests finish
+
+### Aggregate Fail-Fast
+
+The aggregate node verifies data completeness before routing forward. If any critical branch failed (research findings missing, financial or technical analysis contains errors), it writes a clear error report and routes directly to `__end__`, skipping the reflection and writer nodes entirely.
 
 ### Graceful Degradation
 
@@ -272,6 +298,7 @@ When an agent fails after all retries:
 4. **Supervisor** → Falls back to default query parsing (no LLM)
 5. **Reflection** → Uses basic completeness checks instead of LLM review
 6. **Writer** → Returns `"Report generation failed: <error>"`
+7. **Aggregate node** → If any branch failed, writes error report and routes to `__end__`, skipping reflection and writer entirely
 
 ---
 

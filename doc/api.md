@@ -98,6 +98,7 @@ Run autonomous equity research on a single company.
 |:--|:--|
 | `200` | Research completed successfully |
 | `400` | Empty query |
+| `499` | Request cancelled (client disconnect or server shutdown) |
 | `500` | Research failed (see `detail` for error) |
 
 **Error Response:**
@@ -157,6 +158,7 @@ Same schema as `/api/research`, with `query_type: "comparison"` and `comparison_
 |:--|:--|
 | `200` | Comparison completed successfully |
 | `400` | Missing ticker symbols |
+| `499` | Request cancelled (client disconnect or server shutdown) |
 | `500` | Comparison failed |
 
 ---
@@ -229,9 +231,10 @@ sequenceDiagram
 All endpoints follow consistent error handling:
 
 1. **Input validation** — Pydantic models validate request bodies
-2. **Graph execution** — LangGraph handles agent failures with retry policy
-3. **Graceful degradation** — Agents return error messages instead of crashing
-4. **Structured errors** — HTTP 500 with descriptive `detail` field
+2. **CancelledError handling** — HTTP 499 returned on client disconnect or shutdown
+3. **Graph execution** — LangGraph handles agent failures with retry policy
+4. **Graceful degradation** — Agents return error messages instead of crashing
+5. **Structured errors** — HTTP 500 with descriptive `detail` field
 
 ### Retry Policy
 

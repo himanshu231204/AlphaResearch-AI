@@ -84,7 +84,7 @@ pytest tests/ --cov=. --cov-report=html
 | Test | Description |
 |:--|:--|
 | `test_research_state_has_required_fields` | Verifies ResearchState TypedDict has all required fields |
-| `test_reflection_stops_after_max_cycles` | Reflection returns RESEARCH_COMPLETE after 3 cycles |
+| `test_reflection_stops_after_max_cycles` | Async: reflection returns RESEARCH_COMPLETE after 3 cycles |
 | `test_route_after_supervisor_returns_parallel_nodes` | Supervisor routes to both subgraphs |
 | `test_route_after_aggregation_comparison` | Routes to comparison node for comparison queries |
 | `test_route_after_aggregation_single_stock` | Routes to reflection for single stock queries |
