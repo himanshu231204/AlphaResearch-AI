@@ -44,9 +44,10 @@ GROQ_LLAMA = "groq/llama-3.3-70b-versatile"
 OPENROUTER_NEX = "openrouter/nex-agi/nex-n2-pro:free"
 
 # Model aliases (init_chat_model format — used by deepagents create_deep_agent)
+# :free suffix required for OpenRouter free models
 GEMINI_FLASH_INIT = "google_genai:gemini-2.5-flash"
 GROQ_LLAMA_INIT = "groq:llama-3.3-70b-versatile"
-OPENROUTER_NEX_INIT = "openrouter:nex-agi/nex-n2-pro"
+OPENROUTER_NEX_INIT = "openrouter:nex-agi/nex-n2-pro:free"
 
 # ---------------------------------------------------------------------------
 # Rate limiter — shared across all models to prevent burst flooding

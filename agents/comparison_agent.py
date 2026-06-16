@@ -5,7 +5,7 @@ from deepagents import create_deep_agent
 from tools.comparison_tools import ALL_COMPARISON_TOOLS
 from tools.search_tools import ALL_SEARCH_TOOLS
 from prompts.workflow import COMPARISON_AGENT_PROMPT, COMPETITOR_RESEARCH_PROMPT
-from models.routing import GEMINI_FLASH_INIT, OPENROUTER_FREE_INIT
+from models.routing import OPENROUTER_NEX_INIT
 
 
 def create_comparison_agent():
@@ -25,11 +25,11 @@ def create_comparison_agent():
         ),
         "system_prompt": COMPETITOR_RESEARCH_PROMPT,
         "tools": ALL_SEARCH_TOOLS,
-        "model": GEMINI_FLASH_INIT,
+        "model": OPENROUTER_NEX_INIT,
     }
 
     agent = create_deep_agent(
-        model=OPENROUTER_FREE_INIT,
+        model=OPENROUTER_NEX_INIT,
         tools=ALL_COMPARISON_TOOLS,
         subagents=[competitor_researcher],
         system_prompt=COMPARISON_AGENT_PROMPT,
