@@ -4,6 +4,7 @@ from deepagents import create_deep_agent
 
 from tools.financial_tools import ALL_FINANCIAL_TOOLS
 from prompts.workflow import FINANCIAL_AGENT_PROMPT
+from models.routing import OPENROUTER_NEX_INIT
 
 
 def create_financial_agent():
@@ -15,7 +16,7 @@ def create_financial_agent():
     - Detailed financial analysis system prompt
     """
     agent = create_deep_agent(
-        model="google_genai:gemini-2.5-pro",
+        model=OPENROUTER_NEX_INIT,
         tools=ALL_FINANCIAL_TOOLS,
         system_prompt=FINANCIAL_AGENT_PROMPT,
     )

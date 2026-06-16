@@ -1,6 +1,8 @@
 """FastAPI application — AlphaResearch AI backend."""
 
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,10 +14,28 @@ logging.basicConfig(
     format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
 )
 
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Graceful shutdown — let in-flight graph executions finish.
+
+    Without this, uvicorn's hard shutdown cancels running asyncio tasks,
+    which surfaces as CancelledError inside LangGraph's astream runner.
+    """
+    logger.info("AlphaResearch AI starting up")
+    yield
+    # On shutdown: give running tasks a brief window to complete
+    logger.info("AlphaResearch AI shutting down — draining in-flight requests")
+    await asyncio.sleep(0.5)
+
+
 app = FastAPI(
     title="AlphaResearch AI",
     description="Autonomous AI Equity Research Platform",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

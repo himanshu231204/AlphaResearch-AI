@@ -12,20 +12,22 @@ Phase 3B capabilities:
   - Memory: Store-based user preferences and query history
 """
 
+import asyncio
 import json
 import logging
 import uuid
-from typing import Literal, Sequence, TypedDict
+import operator
+from typing import Annotated, Literal, Sequence, TypedDict
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
-from langgraph.types import RetryPolicy, interrupt
+from langgraph.types import RetryPolicy, TimeoutPolicy, interrupt
 from pydantic import BaseModel
 
-from models.state import ResearchState
+from models.state import ResearchState, dict_merge, str_replace
 from models.routing import get_model
 from agents.research_deep_agent import create_research_agent
 from agents.financial_deep_agent import create_financial_agent
@@ -49,18 +51,61 @@ _AGENT_RETRY = RetryPolicy(
     retry_on=(Exception,),    # retry on any exception
 )
 
+# Timeout policy for long-running agent nodes — prevents indefinite hangs
+# that lead to CancelledError when the event loop is stressed.
+_AGENT_TIMEOUT = TimeoutPolicy(
+    run_timeout=180,          # hard wall-clock limit: 3 minutes per attempt
+    idle_timeout=60,          # reset on progress; fire if stuck for 60s
+)
+
 
 # ---------------------------------------------------------------------------
 # Structured output models
 # ---------------------------------------------------------------------------
 
 class QueryPlan(BaseModel):
-    """Structured output from the supervisor for query parsing."""
+    """Structured output from the supervisor for query parsing.
+
+    Validators handle OpenRouter/Gemini returning content blocks as lists
+    instead of plain strings.
+    """
 
     query_type: str  # "single_stock" | "comparison"
     company: str
     ticker: str
     target_companies: list[dict]  # [{"company": "...", "ticker": "..."}]
+
+    @classmethod
+    def _extract_text(cls, v):
+        """Extract plain text from content block lists."""
+        if isinstance(v, list):
+            for block in v:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    return block["text"]
+                if isinstance(block, str):
+                    return block
+            return str(v)
+        return v
+
+    @classmethod
+    def model_validate(cls, obj, *args, **kwargs):
+        """Override to fix list-format fields from OpenRouter."""
+        if isinstance(obj, dict):
+            for field in ("company", "ticker", "query_type"):
+                if field in obj and isinstance(obj[field], list):
+                    obj[field] = cls._extract_text(obj[field])
+            if "target_companies" in obj and isinstance(obj["target_companies"], list):
+                fixed = []
+                for tc in obj["target_companies"]:
+                    if isinstance(tc, dict):
+                        fixed.append({
+                            "company": cls._extract_text(tc.get("company", "")),
+                            "ticker": cls._extract_text(tc.get("ticker", "")),
+                        })
+                    else:
+                        fixed.append(tc)
+                obj["target_companies"] = fixed
+        return super().model_validate(obj, *args, **kwargs)
 
 
 class ReflectionResult(BaseModel):
@@ -73,6 +118,7 @@ class ReflectionResult(BaseModel):
 
 # ---------------------------------------------------------------------------
 # Subgraph state types — shared keys map automatically to parent ResearchState
+# Reducers must match ResearchState for concurrent update safety
 # ---------------------------------------------------------------------------
 
 class ResearchAnalysisState(TypedDict):
@@ -83,11 +129,11 @@ class ResearchAnalysisState(TypedDict):
     is added via add_node().
     """
 
-    company: str
-    ticker: str
-    research_findings: str
-    financial_metrics: dict
-    sources: list[str]
+    company: Annotated[str, str_replace]
+    ticker: Annotated[str, str_replace]
+    research_findings: Annotated[str, str_replace]
+    financial_metrics: Annotated[dict, dict_merge]
+    sources: Annotated[list[str], operator.add]
 
 
 class TechnicalAnalysisState(TypedDict):
@@ -96,16 +142,16 @@ class TechnicalAnalysisState(TypedDict):
     Shared keys with ResearchState: company, ticker, technical_analysis.
     """
 
-    company: str
-    ticker: str
-    technical_analysis: dict
+    company: Annotated[str, str_replace]
+    ticker: Annotated[str, str_replace]
+    technical_analysis: Annotated[dict, dict_merge]
 
 
 # ---------------------------------------------------------------------------
 # Supervisor node — LLM-powered query parsing
 # ---------------------------------------------------------------------------
 
-def supervisor_node(state: ResearchState, config: RunnableConfig = None) -> dict:
+async def supervisor_node(state: ResearchState, config: RunnableConfig = None) -> dict:
     """Parse user query and extract company/ticker information using LLM.
 
     Supports two input modes:
@@ -136,7 +182,7 @@ def supervisor_node(state: ResearchState, config: RunnableConfig = None) -> dict
     parser = model.with_structured_output(QueryPlan)
 
     try:
-        plan = parser.invoke([
+        plan = await parser.ainvoke([
             SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT),
             HumanMessage(content=query),
         ])
@@ -176,7 +222,7 @@ def supervisor_node(state: ResearchState, config: RunnableConfig = None) -> dict
 # Research node — web intelligence gathering
 # ---------------------------------------------------------------------------
 
-def research_node(state: ResearchState) -> dict:
+async def research_node(state: ResearchState) -> dict:
     """Run the research DeepAgent to gather web intelligence."""
     agent = create_research_agent()
     company = state.get("company", "")
@@ -190,7 +236,7 @@ def research_node(state: ResearchState) -> dict:
     )
 
     try:
-        result = agent.invoke({
+        result = await agent.ainvoke({
             "messages": [{"role": "user", "content": research_prompt}],
         })
 
@@ -208,7 +254,7 @@ def research_node(state: ResearchState) -> dict:
 # Financial node — fundamental analysis
 # ---------------------------------------------------------------------------
 
-def financial_node(state: ResearchState) -> dict:
+async def financial_node(state: ResearchState) -> dict:
     """Run the financial analysis DeepAgent."""
     agent = create_financial_agent()
     company = state.get("company", "")
@@ -222,7 +268,7 @@ def financial_node(state: ResearchState) -> dict:
     )
 
     try:
-        result = agent.invoke({
+        result = await agent.ainvoke({
             "messages": [{"role": "user", "content": financial_prompt}],
         })
 
@@ -239,7 +285,7 @@ def financial_node(state: ResearchState) -> dict:
 # Technical node — technical analysis (Phase 2)
 # ---------------------------------------------------------------------------
 
-def technical_node(state: ResearchState) -> dict:
+async def technical_node(state: ResearchState) -> dict:
     """Run the technical analysis DeepAgent."""
     agent = create_technical_agent()
     ticker = state.get("ticker", "")
@@ -254,7 +300,7 @@ def technical_node(state: ResearchState) -> dict:
     )
 
     try:
-        result = agent.invoke({
+        result = await agent.ainvoke({
             "messages": [{"role": "user", "content": technical_prompt}],
         })
 
@@ -294,7 +340,7 @@ def aggregate_node(state: ResearchState) -> dict:
 # Comparison node — head-to-head analysis (Phase 2)
 # ---------------------------------------------------------------------------
 
-def comparison_node(state: ResearchState) -> dict:
+async def comparison_node(state: ResearchState) -> dict:
     """Run the comparison DeepAgent for multi-company queries."""
     agent = create_comparison_agent()
     target_companies = state.get("target_companies", [])
@@ -321,7 +367,7 @@ def comparison_node(state: ResearchState) -> dict:
     )
 
     try:
-        result = agent.invoke({
+        result = await agent.ainvoke({
             "messages": [{"role": "user", "content": comparison_prompt}],
         })
 
@@ -338,7 +384,7 @@ def comparison_node(state: ResearchState) -> dict:
 # Reflection node — LLM-driven quality review (Phase 2)
 # ---------------------------------------------------------------------------
 
-def reflection_node(state: ResearchState) -> dict:
+async def reflection_node(state: ResearchState) -> dict:
     """LLM-driven quality review of all research findings."""
     cycle_count = state.get("cycle_count", 0)
 
@@ -351,7 +397,7 @@ def reflection_node(state: ResearchState) -> dict:
     context = _build_reflection_context(state)
 
     try:
-        result = parser.invoke([
+        result = await parser.ainvoke([
             SystemMessage(content=REFLECTION_PROMPT),
             HumanMessage(content=context),
         ])
@@ -436,7 +482,7 @@ def _fallback_reflection(state: ResearchState, cycle_count: int) -> dict:
 # Writer node — report generation
 # ---------------------------------------------------------------------------
 
-def writer_node(state: ResearchState) -> dict:
+async def writer_node(state: ResearchState) -> dict:
     """Generate the final research report.
 
     Phase 3B: Interrupts for human-in-the-loop approval before generation.
@@ -492,7 +538,7 @@ def writer_node(state: ResearchState) -> dict:
     )
 
     try:
-        report = chain.invoke({
+        report = await chain.ainvoke({
             "company": state.get("company", "Unknown"),
             "ticker": state.get("ticker", "N/A"),
             "research_findings": state.get("research_findings", ""),
@@ -638,8 +684,8 @@ def build_research_analysis_subgraph():
     """
     builder = StateGraph(ResearchAnalysisState)
 
-    builder.add_node("research", research_node, retry_policy=_AGENT_RETRY)
-    builder.add_node("financial", financial_node, retry_policy=_AGENT_RETRY)
+    builder.add_node("research", research_node, retry_policy=_AGENT_RETRY, timeout=_AGENT_TIMEOUT)
+    builder.add_node("financial", financial_node, retry_policy=_AGENT_RETRY, timeout=_AGENT_TIMEOUT)
 
     builder.add_edge(START, "research")
     builder.add_edge("research", "financial")
@@ -656,7 +702,7 @@ def build_technical_analysis_subgraph():
     """
     builder = StateGraph(TechnicalAnalysisState)
 
-    builder.add_node("technical", technical_node, retry_policy=_AGENT_RETRY)
+    builder.add_node("technical", technical_node, retry_policy=_AGENT_RETRY, timeout=_AGENT_TIMEOUT)
 
     builder.add_edge(START, "technical")
     builder.add_edge("technical", END)
@@ -668,8 +714,13 @@ def build_technical_analysis_subgraph():
 # Graph builder
 # ---------------------------------------------------------------------------
 
-def build_graph():
+def build_graph(use_platform_persistence: bool = False):
     """Build and compile the LangGraph supervisor graph.
+
+    Args:
+        use_platform_persistence: If True, skip checkpointer and store
+            (for LangGraph API server which handles persistence automatically).
+            If False, use InMemorySaver and InMemoryStore (for standalone use).
 
     Graph topology (Phase 3B — subgraphs + interrupts):
 
@@ -690,16 +741,6 @@ def build_graph():
         writer  (interrupts for human approval)
           |
          END
-
-    Phase 3A capabilities:
-      - Store: InMemoryStore for cross-thread long-term memory
-      - Checkpointer: MemorySaver for per-thread persistence
-      - Retry policies: All agent nodes retry up to 3x on transient failures
-
-    Phase 3B capabilities:
-      - Subgraphs: research_analysis and technical_analysis as proper subgraphs
-      - Interrupts: Human-in-the-loop approval before report generation
-      - Memory: Store-based user preferences and query history
     """
     builder = StateGraph(ResearchState)
 
@@ -712,9 +753,9 @@ def build_graph():
     builder.add_node("research_analysis", research_subgraph)
     builder.add_node("technical_analysis", technical_subgraph)
     builder.add_node("aggregate", aggregate_node)
-    builder.add_node("comparison", comparison_node, retry_policy=_AGENT_RETRY)
-    builder.add_node("reflection", reflection_node, retry_policy=_AGENT_RETRY)
-    builder.add_node("writer", writer_node, retry_policy=_AGENT_RETRY)
+    builder.add_node("comparison", comparison_node, retry_policy=_AGENT_RETRY, timeout=_AGENT_TIMEOUT)
+    builder.add_node("reflection", reflection_node, retry_policy=_AGENT_RETRY, timeout=_AGENT_TIMEOUT)
+    builder.add_node("writer", writer_node, retry_policy=_AGENT_RETRY, timeout=_AGENT_TIMEOUT)
 
     # Edges
     builder.add_edge(START, "supervisor")
@@ -752,13 +793,18 @@ def build_graph():
 
     builder.add_edge("writer", END)
 
-    checkpointer = MemorySaver()
-    store = InMemoryStore()
-    return builder.compile(checkpointer=checkpointer, store=store)
+    if use_platform_persistence:
+        # LangGraph API server handles persistence automatically
+        return builder.compile()
+    else:
+        # Standalone mode (FastAPI, tests) — use in-memory persistence
+        checkpointer = MemorySaver()
+        store = InMemoryStore()
+        return builder.compile(checkpointer=checkpointer, store=store)
 
 
 # ---------------------------------------------------------------------------
-# Module-level compiled graph — used by LangGraph Server via langgraph.json
+# Module-level compiled graph — used by FastAPI and tests (standalone mode)
 # ---------------------------------------------------------------------------
 
-graph = build_graph()
+graph = build_graph(use_platform_persistence=False)

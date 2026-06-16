@@ -4,6 +4,7 @@ from deepagents import create_deep_agent
 
 from tools.search_tools import ALL_SEARCH_TOOLS
 from prompts.workflow import RESEARCH_AGENT_PROMPT
+from models.routing import OPENROUTER_FREE_INIT, GEMINI_FLASH_INIT
 
 
 RESEARCH_SUBAGENT_PROMPT = """You are a deep web research specialist.
@@ -40,11 +41,11 @@ def create_research_agent():
         ),
         "system_prompt": RESEARCH_SUBAGENT_PROMPT,
         "tools": ALL_SEARCH_TOOLS,
-        "model": "google_genai:gemini-2.5-flash",
+        "model": GEMINI_FLASH_INIT,
     }
 
     agent = create_deep_agent(
-        model="google_genai:gemini-2.5-pro",
+        model=OPENROUTER_FREE_INIT,
         tools=ALL_SEARCH_TOOLS,
         subagents=[web_researcher],
         system_prompt=RESEARCH_AGENT_PROMPT,

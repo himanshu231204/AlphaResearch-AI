@@ -18,11 +18,17 @@ from langchain_litellm import ChatLiteLLM
 
 logger = logging.getLogger(__name__)
 
-# Model aliases
+# Model aliases (litellm format — used by ChatLiteLLM)
 GEMINI_FLASH = "gemini/gemini-2.5-flash"
 GROQ_LLAMA = "groq/llama-3.3-70b-versatile"
 OPENROUTER_NEX = "openrouter/nex-agi/nex-n2-pro:free"
 OPENROUTER_FREE = "openrouter/meta-llama/llama-3.3-70b-instruct:free"
+
+# Model aliases (init_chat_model format — used by deepagents create_deep_agent)
+GEMINI_FLASH_INIT = "google_genai:gemini-2.5-flash"
+GROQ_LLAMA_INIT = "groq:llama-3.3-70b-versatile"
+OPENROUTER_NEX_INIT = "openrouter:nex-agi/nex-n2-pro"
+OPENROUTER_FREE_INIT = "openrouter:meta-llama/llama-3.3-70b-instruct"
 
 # Task → model mapping (primary models)
 MODEL_ROUTING = {
@@ -32,10 +38,10 @@ MODEL_ROUTING = {
     "report_writing": GEMINI_FLASH,
     # Financial analysis → OpenRouter Nex (free)
     "financial_analysis": OPENROUTER_NEX,
-    # Fast / search tasks → Groq Llama
-    "research": GROQ_LLAMA,
-    "technical_analysis": GROQ_LLAMA,
-    "quick_summary": GROQ_LLAMA,
+    # Fast / search tasks → OpenRouter Free (avoiding Groq rate limits)
+    "research": OPENROUTER_FREE,
+    "technical_analysis": OPENROUTER_FREE,
+    "quick_summary": OPENROUTER_FREE,
 }
 
 # Fallback chain: OpenRouter Free → Gemini Flash

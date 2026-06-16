@@ -5,6 +5,7 @@ from deepagents import create_deep_agent
 from tools.technical_tools import ALL_TECHNICAL_TOOLS
 from tools.search_tools import ALL_SEARCH_TOOLS
 from prompts.workflow import TECHNICAL_AGENT_PROMPT
+from models.routing import OPENROUTER_FREE_INIT, GEMINI_FLASH_INIT
 
 TECHNICAL_RESEARCHER_PROMPT = """You are a technical analysis research specialist.
 
@@ -43,11 +44,11 @@ def create_technical_agent():
         ),
         "system_prompt": TECHNICAL_RESEARCHER_PROMPT,
         "tools": ALL_SEARCH_TOOLS,
-        "model": "google_genai:gemini-2.5-flash",
+        "model": GEMINI_FLASH_INIT,
     }
 
     agent = create_deep_agent(
-        model="xai/grok-3",
+        model=OPENROUTER_FREE_INIT,
         tools=ALL_TECHNICAL_TOOLS,
         subagents=[technical_researcher],
         system_prompt=TECHNICAL_AGENT_PROMPT,

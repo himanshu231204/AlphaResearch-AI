@@ -56,7 +56,9 @@ async def run_research(request: ResearchRequest):
 
         graph = build_graph()
 
-        result = graph.invoke(
+        # Use ainvoke to avoid blocking the event loop — graph.invoke()
+        # inside an async endpoint starves asyncio and triggers CancelledError.
+        result = await graph.ainvoke(
             {
                 "user_query": request.query,
                 "messages": [{"role": "user", "content": request.query}],
@@ -99,7 +101,8 @@ async def run_comparison(request: CompareRequest):
 
         graph = build_graph()
 
-        result = graph.invoke(
+        # Use ainvoke — same reason as run_research above.
+        result = await graph.ainvoke(
             {
                 "user_query": query,
                 "messages": [{"role": "user", "content": query}],
