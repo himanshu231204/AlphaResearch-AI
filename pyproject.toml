@@ -1,0 +1,55 @@
+[project]
+name = "alpha-research-ai"
+version = "0.1.0"
+description = "Autonomous AI Equity Research Platform"
+requires-python = ">=3.11"
+dependencies = [
+    # Agent Framework
+    "langgraph",
+    "langchain-core",
+    "deepagents",
+    # Model providers (for deepagents model strings)
+    "langchain-google-genai",
+    "langchain-xai",
+    "langchain-litellm",
+    # Backend
+    "fastapi",
+    "uvicorn[standard]",
+    # Config
+    "pydantic",
+    "pydantic-settings",
+    "python-dotenv",
+    # Financial Data
+    "yfinance",
+    "finnhub-python",
+    "alpha-vantage",
+    "pandas",
+    "numpy",
+    # Technical Analysis
+    "ta",
+    # Search
+    "httpx",
+    # Vector DB (Phase 1 stub)
+    "langchain-chroma",
+    "chromadb",
+    "langchain-huggingface",
+    # Observability
+    "langsmith",
+    # LangGraph Server (for Agent Chat UI)
+    "langgraph-cli[inmem]",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+    "pytest-cov",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*", "agents*", "models*", "tools*", "rag*", "memory*", "prompts*"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

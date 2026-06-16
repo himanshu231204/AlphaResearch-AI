@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# OpenCode tool directories
+.opencode/
+.tmp/
+
+# LangGraph API checkpoints
+.langgraph_api/
+
+# Frontend (separate git repository)
+frontend/
